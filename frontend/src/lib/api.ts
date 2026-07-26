@@ -48,7 +48,8 @@ export interface MarketTrendsResponse {
   job_ids: string[];
 }
 
-const BACKEND_URL = import.meta.env.VITE_API_BASE_URL || "";
+const BACKEND_URL = import.meta.env.VITE_API_BASE_URL ||
+  (import.meta.env.DEV ? "http://localhost:8000" : "");
 
 export async function fetchMarketTrends(query: string, limit = 25): Promise<MarketTrendsResponse> {
   const response = await fetch(`${BACKEND_URL}/api/trends`, {

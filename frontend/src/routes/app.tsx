@@ -112,12 +112,13 @@ function AppLayout() {
               </div>
             </header>
             <main key={pathname} className="min-w-0 flex-1 p-4 sm:p-6 lg:p-8">
-              {loading ? (
-                <div className="flex h-full min-h-[50vh] flex-col items-center justify-center gap-3">
-                  <div className="h-8 w-8 animate-spin rounded-full border-4 border-primary border-t-transparent" />
-                  <p className="text-sm text-muted-foreground">Querying agents for "{query}"...</p>
+              {loading && (
+                <div className="mb-4 flex items-center gap-2 rounded-lg border border-primary/20 bg-primary/5 px-4 py-2 text-sm text-muted-foreground">
+                  <div className="h-4 w-4 animate-spin rounded-full border-2 border-primary border-t-transparent" />
+                  Querying agents for "{query}"...
                 </div>
-              ) : error ? (
+              )}
+              {error ? (
                 <div className="rounded-2xl border border-destructive/20 bg-destructive/10 p-6 text-center text-destructive">
                   <h3 className="font-semibold">Search Error</h3>
                   <p className="mt-1 text-sm">{error}</p>

@@ -175,7 +175,7 @@ function Landing() {
                   Start Free Trial <ArrowRight className="ml-1 h-4 w-4" />
                 </Link>
               </Button>
-              <Button size="lg" variant="outline">Book Demo</Button>
+
             </div>
             <div className="mt-6 flex flex-wrap items-center justify-center gap-x-6 gap-y-2 text-xs text-muted-foreground">
               <span className="flex items-center gap-1.5"><CheckCircle2 className="h-3.5 w-3.5 text-accent" /> No credit card</span>
@@ -428,13 +428,7 @@ function Landing() {
               <Button size="lg" variant="secondary" asChild>
                 <Link to="/signup">Start Free Trial</Link>
               </Button>
-              <Button
-                size="lg"
-                variant="outline"
-                className="border-primary-foreground/30 bg-transparent text-primary-foreground hover:bg-primary-foreground/10 hover:text-primary-foreground"
-              >
-                Book Demo
-              </Button>
+
             </div>
           </div>
         </div>
