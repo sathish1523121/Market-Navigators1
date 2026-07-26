@@ -1,16 +1,14 @@
 {
   "version": 2,
   "buildCommand": "cd frontend && npm install && npm run build",
-  "outputDirectory": "frontend/.output/public",
+  "outputDirectory": "frontend/.vercel/output/static",
   "build": {
     "env": {
-      "NITRO_PRESET": "static",
       "PYO3_USE_ABI3_FORWARD_COMPATIBILITY": "1",
       "PYTHON_VERSION": "3.12"
     }
   },
   "env": {
-    "NITRO_PRESET": "static",
     "PYO3_USE_ABI3_FORWARD_COMPATIBILITY": "1",
     "PYTHON_VERSION": "3.12"
   },
