@@ -27,6 +27,10 @@
     {
       "source": "/openapi.json",
       "destination": "/api/index.py"
+    },
+    {
+      "source": "/:path*",
+      "destination": "/__server"
     }
   ]
 }
