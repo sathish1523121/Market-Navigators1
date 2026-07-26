@@ -51,7 +51,9 @@ class Settings(BaseSettings):
     JWT_SECRET: str = "dev-secret-change-me"
 
     # --- CORS ---
-    CORS_ORIGINS: list[str] | str = "http://localhost:5173,http://127.0.0.1:5173,http://localhost:8080,http://127.0.0.1:8080"
+    # Comma-separated or JSON-array of allowed origins.
+    # On Railway/production, set CORS_ORIGINS env var to your Vercel URL.
+    CORS_ORIGINS: list[str] | str = "http://localhost:5173,http://127.0.0.1:5173,http://localhost:8080,http://127.0.0.1:8080,https://market-navigators1.vercel.app"
 
     @field_validator("CORS_ORIGINS", mode="before")
     @classmethod
@@ -71,6 +73,15 @@ class Settings(BaseSettings):
 def get_settings() -> Settings:
     env_path = os.path.join(os.path.dirname(__file__), ".env")
     load_dotenv(dotenv_path=env_path, override=True)
+    # Build CORS_ORIGINS: start with any env var value, then append Vercel URL if set
+    cors_raw = os.getenv("CORS_ORIGINS", "")
+    vercel_url = os.getenv("VERCEL_URL", "")  # auto-set by Vercel runtime
+    frontend_url = os.getenv("FRONTEND_URL", "")  # manually set Railway env var
+    extra_origins = [u for u in [vercel_url, frontend_url] if u]
+    if extra_origins:
+        existing = [x.strip() for x in cors_raw.split(",") if x.strip()]
+        merged = list(dict.fromkeys(existing + [f"https://{o}" if not o.startswith("http") else o for o in extra_origins]))
+        cors_raw = ",".join(merged)
     return Settings(
         SUPABASE_URL=os.getenv("SUPABASE_URL", ""),
         SUPABASE_SERVICE_KEY=os.getenv("SUPABASE_SERVICE_KEY", ""),
@@ -79,4 +90,5 @@ def get_settings() -> Settings:
         GEMINI_API_KEY=os.getenv("GEMINI_API_KEY", ""),
         GEMINI_MODEL=os.getenv("GEMINI_MODEL", "gemini-2.5-flash"),
         LLM_PROVIDER=os.getenv("LLM_PROVIDER", "gemini"),
+        CORS_ORIGINS=cors_raw if cors_raw else "http://localhost:5173,https://market-navigators1.vercel.app",
     )

@@ -6,4 +6,4 @@ backend_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "ba
 if backend_path not in sys.path:
     sys.path.insert(0, backend_path)
 
-from backend.main import app as app
+from main import app  # noqa: E402  (main.py lives in backend/)
