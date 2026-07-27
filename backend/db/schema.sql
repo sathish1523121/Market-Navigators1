@@ -2,6 +2,27 @@
 -- Supabase (Postgres) tables backing the "single source of truth" store
 -- in the architecture diagram. Run this in the Supabase SQL editor.
 
+-- ---------------------------------------------------------------------------
+-- Users table for authentication
+-- ---------------------------------------------------------------------------
+create table if not exists users (
+    id            bigint generated always as identity primary key,
+    email         text not null unique,
+    name          text not null,
+    password_hash text not null,  -- SHA-256 hex digest (upgrade to bcrypt in production)
+    role          text not null default 'admin' check (role in ('admin', 'viewer')),
+    is_active     boolean not null default true,
+    created_at    timestamptz not null default now(),
+    updated_at    timestamptz not null default now()
+);
+
+-- Seed the two authorised users (password: 12345 -> SHA-256 hash)
+-- SHA-256('12345') = 5994471abb01112afcc18159f6cc74b4f511b99806da59b3caf5a9c173cacfc5
+insert into users (email, name, password_hash, role, is_active) values
+  ('shreya.narayae1@gmail.com',        'Shreya Narayanan',  '5994471abb01112afcc18159f6cc74b4f511b99806da59b3caf5a9c173cacfc5', 'admin', true),
+  ('shamarthi.sathish111@gmail.com',   'Shamarthi Sathish', '5994471abb01112afcc18159f6cc74b4f511b99806da59b3caf5a9c173cacfc5', 'admin', true)
+on conflict (email) do nothing;
+
 create table if not exists jobs (
     job_id      text not null,
     agent       text not null,
@@ -75,5 +96,7 @@ create table if not exists sku_sales (
     updated_at    timestamptz not null default now()
 );
 
--- Row Level Security: enable and add policies once auth is wired up.
+-- Row Level Security: enable policies so users only see their own data.
 -- alter table products enable row level security;
+-- alter table users enable row level security;
+

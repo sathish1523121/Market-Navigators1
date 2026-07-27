@@ -16,13 +16,14 @@ from __future__ import annotations
 import uuid
 import asyncio
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import RedirectResponse
 
 from config import get_settings
 from models.schemas import TrendsRequest, MarketTrendsResponse, JobStatus
 from agents import match_agent, claims_agent, ingredient_agent, revenue_agent
+from auth.router import router as auth_router, get_current_user, UserInfo
 from services import llm_client
 
 settings = get_settings()
@@ -30,13 +31,21 @@ print("LOADED CORS ORIGINS:", settings.CORS_ORIGINS)
 
 app = FastAPI(title=settings.APP_NAME)
 
+# ===========================================================================
+# 1. ADD CORS MIDDLEWARE FIRST (before any routers)
+# ===========================================================================
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=["*"],  # or settings.CORS_ORIGINS if you have it in config
     allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# ===========================================================================
+# 2. THEN INCLUDE ROUTERS (so CORS applies to all routes)
+# ===========================================================================
+app.include_router(auth_router)
 
 
 # ---------------------------------------------------------------------------
@@ -76,7 +85,7 @@ class ChatRequest(BaseModel):
 
 
 @app.post("/api/assistant/chat")
-async def assistant_chat(req: ChatRequest):
+async def assistant_chat(req: ChatRequest, _current_user: UserInfo = Depends(get_current_user)):
     """
     Interactive AI Assistant endpoint. Runs agent pipeline and uses Gemini AI
     to generate natural language answers to user questions.
@@ -145,7 +154,7 @@ async def assistant_chat(req: ChatRequest):
 
 
 @app.post("/api/trends", response_model=MarketTrendsResponse)
-async def get_market_trends(req: TrendsRequest):
+async def get_market_trends(req: TrendsRequest, _current_user: UserInfo = Depends(get_current_user)):
     """
     Orchestrator endpoint mirroring the architecture diagram: classify
     intent, fan out to the agents, aggregate, and return one unified response.
@@ -183,7 +192,7 @@ async def get_market_trends(req: TrendsRequest):
 
 
 @app.post("/api/trends/async")
-async def get_market_trends_async(req: TrendsRequest):
+async def get_market_trends_async(req: TrendsRequest, _current_user: UserInfo = Depends(get_current_user)):
     """
     Production-shaped version: dispatches the Celery pipeline and returns
     immediately with a job_id the frontend can poll. Requires Redis and
@@ -197,7 +206,7 @@ async def get_market_trends_async(req: TrendsRequest):
 
 
 @app.get("/api/jobs/{job_id}", response_model=MarketTrendsResponse)
-async def get_job_result(job_id: str):
+async def get_job_result(job_id: str, _current_user: UserInfo = Depends(get_current_user)):
     """Poll for aggregated results once the async pipeline has run."""
     from services import supabase_client
 
@@ -214,14 +223,11 @@ async def get_job_result(job_id: str):
 
 
 # ---------------------------------------------------------------------------
-# Auth placeholder
+# Auth is now fully wired up.
 # ---------------------------------------------------------------------------
-# Intentionally not wired up yet. When you add a real auth layer (login
-# page + landing page per the request), mount it here, e.g.:
-#
-#   from auth.router import router as auth_router
-#   app.include_router(auth_router, prefix="/api/auth")
-#
-# and protect routes above with a `Depends(get_current_user)` once
-# settings.AUTH_ENABLED is True. Keeping it decoupled like this means the
-# agents/orchestrator never need to know auth exists.
+# The auth router is mounted at startup (see above).
+# Protected routes use Depends(get_current_user) to enforce authentication.
+# Only these two users can log in:
+#   - shreya.narayae1@gmail.com   (password: 12345)
+#   - shamarthi.sathish111@gmail.com (password: 12345)
+# See backend/auth/router.py to add more users or change passwords.

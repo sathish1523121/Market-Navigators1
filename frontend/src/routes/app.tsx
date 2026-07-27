@@ -48,6 +48,19 @@ function AppLayout() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [searchInputValue, setSearchInputValue] = useState("");
+  const [session, setSession] = useState(() => getAuthSession());
+
+  // Derive user initials from session name
+  const userInitials = session?.name
+    ? session.name
+        .split(" ")
+        .map((n) => n[0])
+        .join("")
+        .toUpperCase()
+        .slice(0, 2)
+    : "?";
+
+  const isEmailVerified = session?.emailVerified ?? true;
 
   const triggerSearch = useCallback(async (q: string) => {
     if (!q.trim()) return;
@@ -71,7 +84,7 @@ function AppLayout() {
       router.navigate({ to: "/login" });
       return;
     }
-
+    setSession(session);
     triggerSearch("immune support");
   }, [router, triggerSearch]);
 
@@ -104,15 +117,20 @@ function AppLayout() {
                     <Bell className="h-4 w-4" />
                   </Link>
                 </Button>
-                <Avatar className="h-8 w-8">
+                <Avatar className="h-8 w-8" title={session?.name ?? ""} >
                   <AvatarFallback className="bg-primary/10 text-xs font-medium text-primary">
-                    AP
+                    {userInitials}
                   </AvatarFallback>
                 </Avatar>
               </div>
             </header>
             <main key={pathname} className="min-w-0 flex-1 p-4 sm:p-6 lg:p-8">
-              {loading && (
+              {!isEmailVerified && (
+              <div className="mb-4 flex items-center justify-between gap-2 rounded-lg border border-amber-500/30 bg-amber-500/10 px-4 py-2 text-sm text-amber-700 dark:text-amber-400">
+                <span>📧 Please verify your email to unlock all features. Check your inbox for a confirmation link.</span>
+              </div>
+            )}
+            {loading && (
                 <div className="mb-4 flex items-center gap-2 rounded-lg border border-primary/20 bg-primary/5 px-4 py-2 text-sm text-muted-foreground">
                   <div className="h-4 w-4 animate-spin rounded-full border-2 border-primary border-t-transparent" />
                   Querying agents for "{query}"...

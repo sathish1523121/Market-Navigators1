@@ -1,5 +1,6 @@
 // api.ts
 // Client-side API functions to fetch market trends from the FastAPI backend.
+import { getAuthToken } from "./auth";
 
 export interface ProductMatch {
   source: "openfoodfacts" | "usda_fdc";
@@ -107,10 +108,15 @@ export async function fetchMarketTrends(query: string, limit = 25): Promise<Mark
     return getDemoData(query);
   }
 
+  const token = getAuthToken();
+
   try {
     const response = await fetch(`${BACKEND_URL}/api/trends`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: {
+        "Content-Type": "application/json",
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      },
       body: JSON.stringify({ query, limit }),
     });
 
@@ -151,10 +157,15 @@ export async function sendAssistantChat(message: string): Promise<{
     };
   }
 
+  const token = getAuthToken();
+
   try {
     const response = await fetch(`${BACKEND_URL}/api/assistant/chat`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: {
+        "Content-Type": "application/json",
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      },
       body: JSON.stringify({ message }),
     });
 

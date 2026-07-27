@@ -46,9 +46,17 @@ class Settings(BaseSettings):
     GEMINI_MODEL: str = "gemini-2.5-flash"
     LLM_PROVIDER: str = "gemini"  # openai | anthropic | gemini
 
-    # --- Auth (placeholder - wire up a real provider later) ---
+    # --- Auth ---
     AUTH_ENABLED: bool = False
     JWT_SECRET: str = "dev-secret-change-me"
+
+    # --- Email / SMTP ---
+    SMTP_HOST: str = "smtp.gmail.com"
+    SMTP_PORT: int = 587
+    SMTP_USER: str = ""
+    SMTP_PASSWORD: str = ""
+    SMTP_FROM: str = ""
+    FRONTEND_BASE_URL: str = "http://localhost:5173"
 
     # --- CORS ---
     # Comma-separated or JSON-array of allowed origins.
@@ -91,4 +99,12 @@ def get_settings() -> Settings:
         GEMINI_MODEL=os.getenv("GEMINI_MODEL", "gemini-2.5-flash"),
         LLM_PROVIDER=os.getenv("LLM_PROVIDER", "gemini"),
         CORS_ORIGINS=cors_raw if cors_raw else "http://localhost:5173,https://market-navigators1.vercel.app",
+        # SMTP — read explicitly so Railway / Vercel env vars are always picked up
+        SMTP_HOST=os.getenv("SMTP_HOST", "smtp.resend.com"),
+        SMTP_PORT=int(os.getenv("SMTP_PORT", "587")),
+        SMTP_USER=os.getenv("SMTP_USER", "resend"),
+        SMTP_PASSWORD=os.getenv("SMTP_PASSWORD", ""),
+        SMTP_FROM=os.getenv("SMTP_FROM", "onboarding@resend.dev"),
+        # Frontend base URL — points to Vercel in prod, localhost in dev
+        FRONTEND_BASE_URL=os.getenv("FRONTEND_BASE_URL", "https://market-navigators1.vercel.app"),
     )

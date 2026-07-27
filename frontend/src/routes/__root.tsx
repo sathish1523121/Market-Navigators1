@@ -9,6 +9,7 @@ import { useEffect } from "react";
 
 // CSS is imported directly in main.tsx
 import { reportLovableError } from "../lib/lovable-error-reporting";
+import { Toaster } from "@/components/ui/sonner";
 
 function NotFoundComponent() {
   return (
@@ -92,6 +93,8 @@ function RootComponent() {
     <QueryClientProvider client={queryClient}>
       {/* Required: nested routes render here. Removing <Outlet /> breaks all child routes. */}
       <Outlet />
+      {/* Global toast notifications — available on every page */}
+      <Toaster />
     </QueryClientProvider>
   );
 }

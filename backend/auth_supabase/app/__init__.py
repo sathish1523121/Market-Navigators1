@@ -1,0 +1,3 @@
+"""
+FastAPI Supabase Auth Package
+"""
