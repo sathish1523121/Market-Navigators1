@@ -13,8 +13,14 @@ Run with full async pipeline (needs Redis + a Celery worker):
     uvicorn main:app --reload --port 8000
 """
 from __future__ import annotations
+import os
+import sys
 import uuid
 import asyncio
+
+backend_dir = os.path.dirname(os.path.abspath(__file__))
+if backend_dir not in sys.path:
+    sys.path.insert(0, backend_dir)
 
 from fastapi import FastAPI, HTTPException, Depends
 from fastapi.middleware.cors import CORSMiddleware
