@@ -1,14 +1,11 @@
 """
 auth/router.py
 Production-grade Authentication router for FastAPI using Supabase Auth (GoTrue & PostgREST).
-Serves as the central authentication handler for both standard email link verification and OTP account creation flows.
+Serves as the central authentication handler enforcing mandatory email verification via activation links.
 """
 from __future__ import annotations
 
 import os
-import ssl
-from email.mime.text import MIMEText
-from email.mime.multipart import MIMEMultipart
 import secrets
 import hashlib
 import smtplib
@@ -41,9 +38,7 @@ JWT_EXPIRE_HOURS = 24 * 7
 
 # In-memory stores as development fallback when Supabase is unreachable or in demo tests
 USERS_DB: dict[str, dict] = {}
-OTP_DB: dict[str, dict] = {}
 VERIFICATION_TOKENS: dict[str, dict] = {}
-OTP_EXPIRE_MINUTES = 10
 
 
 def _hash_pw(plain: str) -> str:
@@ -63,78 +58,14 @@ def _make_verification_token(email: str) -> str:
 # SMTP & Email Helpers
 # ---------------------------------------------------------------------------
 def _get_smtp_settings():
-    from_email = os.getenv("SMTP_FROM", os.getenv("FROM_EMAIL", os.getenv("SMTP_USER", os.getenv("SMTP_USERNAME", "onboarding@resend.dev"))))
     return {
-        "host": os.getenv("SMTP_HOST", "smtp.gmail.com"),
+        "host": os.getenv("SMTP_HOST", "smtp.resend.com"),
         "port": int(os.getenv("SMTP_PORT", "587")),
-        "user": os.getenv("SMTP_USER", os.getenv("SMTP_USERNAME", "")),
-        "password": os.getenv("SMTP_PASSWORD", os.getenv("SMTP_KEY", "")),
-        "from_addr": from_email,
-        "fromemail": from_email,
+        "user": os.getenv("SMTP_USER", ""),
+        "password": os.getenv("SMTP_PASSWORD", ""),
+        "from_addr": os.getenv("SMTP_FROM", os.getenv("SMTP_USER", "onboarding@resend.dev")),
         "frontend_base_url": os.getenv("FRONTEND_BASE_URL", "http://localhost:5173"),
     }
-
-
-def send_otp_email_helper(to_email: str, otp_code: str) -> None:
-    try:
-        cfg = _get_smtp_settings()
-        html = f"""
-        <!DOCTYPE html>
-        <html>
-        <body style="font-family:Arial,sans-serif;background:#f5f5f5;padding:40px;">
-            <div style="max-width:500px;margin:auto;background:white;padding:30px;border-radius:12px;">
-                <h2>Email Verification</h2>
-
-                <p>Your verification code is:</p>
-
-                <div style="
-                    background:#2563eb;
-                    color:white;
-                    padding:20px;
-                    border-radius:8px;
-                    text-align:center;
-                    font-size:34px;
-                    letter-spacing:8px;
-                    font-weight:bold;
-                ">
-                    {otp_code}
-                </div>
-
-                <p>This code expires in <b>5 minutes</b>.</p>
-
-                <hr>
-
-                <small>
-                    If you didn't request this email, you can safely ignore it.
-                </small>
-            </div>
-        </body>
-        </html>
-        """
-
-        message = MIMEMultipart("alternative")
-        message["Subject"] = "Your Verification Code"
-        message["From"] = cfg["fromemail"]
-        message["To"] = to_email
-
-        message.attach(MIMEText(html, "html"))
-
-        context = ssl.create_default_context()
-
-        with smtplib.SMTP(cfg["host"], cfg["port"], timeout=10) as server:
-            server.ehlo()
-            server.starttls(context=context)
-            server.ehlo()
-            if cfg["user"] and cfg["password"]:
-                server.login(cfg["user"], cfg["password"])
-                server.sendmail(
-                    cfg["from_addr"],     # Sender
-                    to_email,             # Recipient
-                    message.as_string()
-                )
-    except Exception as exc:
-        logger.warning(f"SMTP delivery failed (falling back to console/Supabase): {exc}")
-        print(f"\n[DEV FALLBACK] 6-digit OTP code for {to_email}: {otp_code}\n")
 
 
 def send_verification_email_helper(to_email: str, token: str, name: str) -> None:
@@ -282,22 +213,6 @@ class UserInfo(BaseModel):
     role: str = "admin"
 
 
-class SendOtpRequest(BaseModel):
-    email: str
-
-
-class VerifyOtpRequest(BaseModel):
-    email: str
-    otp: str
-
-
-class CompleteSignupRequest(BaseModel):
-    email: str
-    otp: str
-    name: str
-    password: str
-
-
 # ---------------------------------------------------------------------------
 # Dependencies & Current User Verification
 # ---------------------------------------------------------------------------
@@ -357,197 +272,6 @@ async def get_current_user(token: Optional[str] = Depends(oauth2_scheme)) -> Use
 # Router definition & API Routes
 # ---------------------------------------------------------------------------
 router = APIRouter(prefix="/api/auth", tags=["auth"])
-
-
-@router.post("/send-otp")
-async def send_otp(req: SendOtpRequest):
-    email = req.email.strip().lower()
-    if not email or "@" not in email:
-        raise HTTPException(status_code=400, detail="Invalid email address.")
-
-    s_url, s_anon, s_service, _ = get_supabase_keys()
-
-    # Check if user already exists and is fully active
-    existing = find_supabase_user_by_email(email)
-    if existing:
-        is_confirmed = bool(existing.get("email_confirmed_at") or existing.get("confirmed_at") or existing.get("email_verified"))
-        if is_confirmed:
-            raise HTTPException(status_code=409, detail="An account with this email already exists. Please sign in instead.")
-
-    # 1. Initiate OTP delivery through Supabase Auth (uses Site URL / URL Config)
-    if s_url and s_anon:
-        try:
-            res = httpx.post(
-                f"{s_url}/auth/v1/otp",
-                json={"email": email, "create_user": True},
-                headers={"apikey": s_anon, "Content-Type": "application/json"},
-                timeout=8.0,
-            )
-            if res.status_code not in (200, 201, 202, 429):
-                logger.warning(f"Supabase auth/v1/otp notice: {res.status_code} - {res.text}")
-        except Exception as exc:
-            logger.error(f"Supabase auth/v1/otp exception: {exc}")
-
-    # 2. Also generate and log/send a 6-digit OTP code to guarantee instant verification capability
-    otp_code = f"{secrets.randbelow(1000000):06d}"
-    OTP_DB[email] = {
-        "otp": otp_code,
-        "expires_at": datetime.now(timezone.utc) + timedelta(minutes=OTP_EXPIRE_MINUTES),
-        "verified": False,
-    }
-    send_otp_email_helper(email, otp_code)
-
-    # If in local dev without SMTP configured, include devOtpCode for seamless testing
-    dev_otp = otp_code if not os.getenv("SMTP_USER") or "resend" in os.getenv("SMTP_HOST", "") else None
-    return {"message": f"Verification code sent to {email}.", "email": email, "devOtpCode": dev_otp, "otp_code": dev_otp}
-
-
-@router.post("/verify-otp")
-async def verify_otp(req: VerifyOtpRequest):
-    email = req.email.strip().lower()
-    otp = req.otp.strip()
-    if not otp:
-        raise HTTPException(status_code=400, detail="Verification code is required.")
-
-    s_url, s_anon, _, _ = get_supabase_keys()
-
-    # 1. Check against Supabase Auth verify endpoint
-    supabase_verified = False
-    if s_url and s_anon:
-        for v_type in ("email", "magiclink", "signup"):
-            try:
-                res = httpx.post(
-                    f"{s_url}/auth/v1/verify",
-                    json={"email": email, "token": otp, "type": v_type},
-                    headers={"apikey": s_anon, "Content-Type": "application/json"},
-                    timeout=5.0,
-                )
-                if res.status_code == 200:
-                    supabase_verified = True
-                    break
-            except Exception:
-                pass
-
-    # 2. Check local fallback OTP_DB
-    local_verified = False
-    record = OTP_DB.get(email)
-    if record:
-        if datetime.now(timezone.utc) <= record["expires_at"] and record["otp"] == otp:
-            local_verified = True
-            record["verified"] = True
-
-    if not supabase_verified and not local_verified:
-        raise HTTPException(status_code=400, detail="Invalid or expired verification code. Please request a new code.")
-
-    if email not in OTP_DB:
-        OTP_DB[email] = {"otp": otp, "expires_at": datetime.now(timezone.utc) + timedelta(minutes=10), "verified": True}
-    else:
-        OTP_DB[email]["verified"] = True
-
-    return {"message": "Email verified successfully!", "email": email}
-
-
-@router.post("/complete-signup", response_model=TokenResponse, status_code=201)
-async def complete_signup(req: CompleteSignupRequest):
-    email = req.email.strip().lower()
-    if len(req.password) < 4:
-        raise HTTPException(status_code=400, detail="Password must be at least 4 characters.")
-    name = req.name.strip()
-    if not name:
-        raise HTTPException(status_code=400, detail="Name is required.")
-
-    # Validate that OTP step was verified
-    record = OTP_DB.get(email)
-    is_otp_verified = record and record.get("verified") and (record.get("otp") == req.otp.strip() or req.otp.strip() == "VERIFIED")
-    
-    s_url, s_anon, s_service, _ = get_supabase_keys()
-    existing_user = find_supabase_user_by_email(email)
-
-    if not is_otp_verified and not (existing_user and existing_user.get("email_confirmed_at")):
-        raise HTTPException(status_code=400, detail="Please verify your email with the OTP code first.")
-
-    user_id = None
-
-    # 1. Create or Update user in Supabase Auth via Admin API
-    if s_url and s_service:
-        try:
-            if existing_user:
-                user_id = existing_user.get("id")
-                # Update user with password, full_name, and confirm email
-                upd_url = f"{s_url}/auth/v1/admin/users/{user_id}"
-                httpx.put(
-                    upd_url,
-                    json={
-                        "password": req.password,
-                        "email_confirm": True,
-                        "user_metadata": {"full_name": name, "role": "admin"},
-                    },
-                    headers={"apikey": s_service, "Authorization": f"Bearer {s_service}", "Content-Type": "application/json"},
-                    timeout=8.0,
-                )
-            else:
-                # Create confirmed user via Admin API
-                crt_url = f"{s_url}/auth/v1/admin/users"
-                res = httpx.post(
-                    crt_url,
-                    json={
-                        "email": email,
-                        "password": req.password,
-                        "email_confirm": True,
-                        "user_metadata": {"full_name": name, "role": "admin"},
-                    },
-                    headers={"apikey": s_service, "Authorization": f"Bearer {s_service}", "Content-Type": "application/json"},
-                    timeout=8.0,
-                )
-                if res.status_code in (200, 201):
-                    user_id = res.json().get("id")
-        except Exception as exc:
-            logger.error(f"Error completing Supabase OTP signup: {exc}")
-
-    if not user_id:
-        user_id = str(secrets.token_hex(16))
-
-    # Sync profile to public.users table
-    sync_user_to_public_table(user_id, email, name)
-
-    USERS_DB[email] = {
-        "email": email,
-        "name": name,
-        "password_hash": _hash_pw(req.password),
-        "role": "admin",
-        "is_active": True,
-        "email_verified": True,
-        "id": user_id,
-    }
-    OTP_DB.pop(email, None)
-
-    # Log user in directly to obtain valid Supabase token
-    if s_url and s_anon:
-        try:
-            login_res = httpx.post(
-                f"{s_url}/auth/v1/token?grant_type=password",
-                json={"email": email, "password": req.password},
-                headers={"apikey": s_anon, "Content-Type": "application/json"},
-                timeout=6.0,
-            )
-            if login_res.status_code == 200:
-                t_data = login_res.json()
-                return TokenResponse(
-                    access_token=t_data["access_token"],
-                    email=email,
-                    name=name,
-                    role="admin",
-                    expires_in=t_data.get("expires_in", 604800),
-                    email_verified=True,
-                )
-        except Exception:
-            pass
-
-    # Fallback token if online login request took too long
-    token = create_access_token({"sub": email, "email": email, "user_metadata": {"full_name": name, "role": "admin"}})
-    return TokenResponse(
-        access_token=token, email=email, name=name, role="admin", expires_in=JWT_EXPIRE_HOURS * 3600, email_verified=True
-    )
 
 
 @router.post("/register", response_model=RegisterResponse, status_code=201)
