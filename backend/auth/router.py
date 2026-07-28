@@ -365,28 +365,28 @@ async def send_otp(req: SendOtpRequest):
     if not email or "@" not in email:
         raise HTTPException(status_code=400, detail="Invalid email address.")
 
-    s_url, s_anon, s_service, _ = get_supabase_keys()
+    # s_url, s_anon, s_service, _ = get_supabase_keys()
 
-    # Check if user already exists and is fully active
-    existing = find_supabase_user_by_email(email)
-    if existing:
-        is_confirmed = bool(existing.get("email_confirmed_at") or existing.get("confirmed_at") or existing.get("email_verified"))
-        if is_confirmed:
-            raise HTTPException(status_code=409, detail="An account with this email already exists. Please sign in instead.")
+    # # Check if user already exists and is fully active
+    # existing = find_supabase_user_by_email(email)
+    # if existing:
+    #     is_confirmed = bool(existing.get("email_confirmed_at") or existing.get("confirmed_at") or existing.get("email_verified"))
+    #     if is_confirmed:
+    #         raise HTTPException(status_code=409, detail="An account with this email already exists. Please sign in instead.")
 
-    # 1. Initiate OTP delivery through Supabase Auth (uses Site URL / URL Config)
-    if s_url and s_anon:
-        try:
-            res = httpx.post(
-                f"{s_url}/auth/v1/otp",
-                json={"email": email, "create_user": True},
-                headers={"apikey": s_anon, "Content-Type": "application/json"},
-                timeout=8.0,
-            )
-            if res.status_code not in (200, 201, 202, 429):
-                logger.warning(f"Supabase auth/v1/otp notice: {res.status_code} - {res.text}")
-        except Exception as exc:
-            logger.error(f"Supabase auth/v1/otp exception: {exc}")
+    # # 1. Initiate OTP delivery through Supabase Auth (uses Site URL / URL Config)
+    # if s_url and s_anon:
+    #     try:
+    #         res = httpx.post(
+    #             f"{s_url}/auth/v1/otp",
+    #             json={"email": email, "create_user": True},
+    #             headers={"apikey": s_anon, "Content-Type": "application/json"},
+    #             timeout=8.0,
+    #         )
+    #         if res.status_code not in (200, 201, 202, 429):
+    #             logger.warning(f"Supabase auth/v1/otp notice: {res.status_code} - {res.text}")
+    #     except Exception as exc:
+    #         logger.error(f"Supabase auth/v1/otp exception: {exc}")
 
     # 2. Also generate and log/send a 6-digit OTP code to guarantee instant verification capability
     otp_code = f"{secrets.randbelow(1000000):06d}"
