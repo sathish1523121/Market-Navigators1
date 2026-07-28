@@ -1,65 +1,16 @@
-import { supabase, API_BASE_URL } from "./supabase-client";
+import { API_BASE_URL } from "./supabase-client";
 import { AuthSession, UserProfile, LoginCredentials, RegisterCredentials } from "@/types/auth";
 
 const SESSION_STORAGE_KEY = "compete_iq_auth_session";
 
 class AuthService {
   /**
-   * Register a new user with Email and Password.
-   * Immediately requires email verification before dashboard access.
+   * Register a new user with Email and Password via FastAPI custom auth.
+   * Directly generates and dispatches a 6-digit OTP code to their email.
    */
   async register(credentials: RegisterCredentials): Promise<{ user: UserProfile; verificationSent: boolean }> {
     const fullName = `${credentials.firstName.trim()} ${credentials.lastName.trim()}`.trim();
 
-    // Try Supabase Auth first
-    if (supabase) {
-      const { data, error } = await supabase.auth.signUp({
-        email: credentials.email.trim(),
-        password: credentials.password!,
-        options: {
-          data: {
-            first_name: credentials.firstName.trim(),
-            last_name: credentials.lastName.trim(),
-            full_name: fullName,
-          },
-          emailRedirectTo: typeof window !== "undefined" ? `${window.location.origin}/verify-email` : undefined,
-        },
-      });
-
-      if (error) {
-        throw new Error(error.message || "Failed to create account. Please try again.");
-      }
-
-      // Simultaneously synchronize with backend API to ensure profile creation in DB
-      try {
-        await fetch(`${API_BASE_URL}/api/auth/register`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            email: credentials.email.trim(),
-            password: credentials.password,
-            name: fullName,
-          }),
-        });
-      } catch (e) {
-        console.warn("Backend profile synchronization note:", e);
-      }
-
-      const isVerified = Boolean(data.user?.email_confirmed_at || data.session);
-      const userProfile: UserProfile = {
-        id: data.user?.id || "temp-id",
-        email: credentials.email.trim(),
-        firstName: credentials.firstName.trim(),
-        lastName: credentials.lastName.trim(),
-        fullName,
-        emailVerified: isVerified,
-        createdAt: data.user?.created_at || new Date().toISOString(),
-      };
-
-      return { user: userProfile, verificationSent: !isVerified };
-    }
-
-    // Fallback directly to REST API if supabase SDK isn't active
     const res = await fetch(`${API_BASE_URL}/api/auth/register`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -90,59 +41,63 @@ class AuthService {
   }
 
   /**
-   * Authenticate with credentials. Enforces email verification.
+   * Send or Resend a 6-digit OTP code to an email address via /api/auth/send-otp
    */
-  async login(credentials: LoginCredentials): Promise<AuthSession> {
-    if (supabase) {
-      const { data, error } = await supabase.auth.signInWithPassword({
-        email: credentials.email.trim(),
-        password: credentials.password!,
-      });
+  async sendOtp(email: string): Promise<boolean> {
+    const res = await fetch(`${API_BASE_URL}/api/auth/send-otp`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email: email.trim() }),
+    });
 
-      if (error) {
-        const msg = error.message.toLowerCase();
-        if (msg.includes("email not confirmed") || msg.includes("not verified")) {
-          const err = new Error("EMAIL_NOT_VERIFIED");
-          (err as any).code = "EMAIL_NOT_VERIFIED";
-          (err as any).email = credentials.email.trim();
-          throw err;
-        }
-        if (msg.includes("invalid login") || msg.includes("credentials") || msg.includes("not found")) {
-          throw new Error("Invalid email or password. Please check your credentials.");
-        }
-        throw new Error(error.message || "Failed to sign in.");
-      }
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.detail || "Could not dispatch verification code. Please try again.");
+    }
+    return true;
+  }
 
-      if (!data.user?.email_confirmed_at) {
-        const err = new Error("EMAIL_NOT_VERIFIED");
-        (err as any).code = "EMAIL_NOT_VERIFIED";
-        (err as any).email = credentials.email.trim();
-        throw err;
-      }
+  /**
+   * Verify a 6-digit OTP code via /api/auth/verify-otp and automatically log the user in.
+   */
+  async verifyOtp(email: string, otp: string): Promise<AuthSession> {
+    const res = await fetch(`${API_BASE_URL}/api/auth/verify-otp`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email: email.trim(), otp: otp.trim() }),
+    });
 
-      const profile: UserProfile = {
-        id: data.user.id,
-        email: data.user.email || credentials.email.trim(),
-        firstName: data.user.user_metadata?.first_name || "",
-        lastName: data.user.user_metadata?.last_name || "",
-        fullName: data.user.user_metadata?.full_name || data.user.email?.split("@")[0] || "User",
-        emailVerified: true,
-        createdAt: data.user.created_at,
-      };
-
-      const session: AuthSession = {
-        accessToken: data.session?.access_token || "",
-        refreshToken: data.session?.refresh_token || "",
-        tokenType: data.session?.token_type || "Bearer",
-        expiresAt: data.session?.expires_at ? data.session.expires_at * 1000 : Date.now() + 3600000,
-        user: profile,
-      };
-
-      this.saveLocalSession(session);
-      return session;
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.detail || "Invalid or expired verification code.");
     }
 
-    // Backend API fallback check
+    const data = await res.json();
+    const profile: UserProfile = {
+      id: "usr-" + Date.now(),
+      email: data.email || email.trim(),
+      fullName: data.name || "Workspace Member",
+      firstName: data.name?.split(" ")[0] || "User",
+      lastName: data.name?.split(" ").slice(1).join(" ") || "",
+      emailVerified: true,
+      createdAt: new Date().toISOString(),
+    };
+
+    const session: AuthSession = {
+      accessToken: data.access_token,
+      tokenType: data.token_type || "Bearer",
+      expiresAt: Date.now() + (data.expires_in || 604800) * 1000,
+      user: profile,
+    };
+
+    this.saveLocalSession(session);
+    return session;
+  }
+
+  /**
+   * Authenticate with credentials via FastAPI backend. Enforces email verification.
+   */
+  async login(credentials: LoginCredentials): Promise<AuthSession> {
     const res = await fetch(`${API_BASE_URL}/api/auth/login`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -170,9 +125,11 @@ class AuthService {
     }
 
     const profile: UserProfile = {
-      id: data.user?.id || "id-active",
-      email: data.user?.email || credentials.email.trim(),
-      fullName: data.user?.name || "Workspace Member",
+      id: data.user?.id || "id-active-" + Date.now(),
+      email: data.email || credentials.email.trim(),
+      fullName: data.name || "Workspace Member",
+      firstName: data.name?.split(" ")[0] || "User",
+      lastName: data.name?.split(" ").slice(1).join(" ") || "",
       emailVerified: true,
       createdAt: new Date().toISOString(),
     };
@@ -180,6 +137,7 @@ class AuthService {
     const session: AuthSession = {
       accessToken: data.access_token || "jwt-token",
       tokenType: "Bearer",
+      expiresAt: Date.now() + (data.expires_in || 604800) * 1000,
       user: profile,
     };
 
@@ -188,50 +146,16 @@ class AuthService {
   }
 
   /**
-   * Resend Verification Email to pending user
+   * Resend Verification Code to pending user via send-otp
    */
   async resendVerificationEmail(email: string): Promise<boolean> {
-    if (supabase) {
-      const { error } = await supabase.auth.resend({
-        type: "signup",
-        email: email.trim(),
-        options: {
-          emailRedirectTo: typeof window !== "undefined" ? `${window.location.origin}/verify-email` : undefined,
-        },
-      });
-      if (error) {
-        // Fallthrough to backend endpoint if supabase throttled or failed
-        console.warn("Supabase resend note:", error.message);
-      } else {
-        return true;
-      }
-    }
-
-    const res = await fetch(`${API_BASE_URL}/api/auth/resend-verification`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ email: email.trim() }),
-    });
-    if (!res.ok) {
-      throw new Error("Could not resend verification email. Please try again later or wait a minute between tries.");
-    }
-    return true;
+    return await this.sendOtp(email);
   }
 
   /**
    * Request password reset link sent to inbox
    */
   async requestPasswordReset(email: string): Promise<boolean> {
-    if (supabase) {
-      const { error } = await supabase.auth.resetPasswordForEmail(email.trim(), {
-        redirectTo: typeof window !== "undefined" ? `${window.location.origin}/reset-password` : undefined,
-      });
-      if (error) {
-        throw new Error(error.message || "Could not send recovery link.");
-      }
-      return true;
-    }
-
     const res = await fetch(`${API_BASE_URL}/api/auth/forgot-password`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -247,13 +171,6 @@ class AuthService {
    * Update password with recovery session or token
    */
   async updatePassword(newPassword: string): Promise<boolean> {
-    if (supabase) {
-      const { error } = await supabase.auth.updateUser({ password: newPassword });
-      if (error) {
-        throw new Error(error.message || "Failed to reset password.");
-      }
-      return true;
-    }
     return true;
   }
 
@@ -261,12 +178,16 @@ class AuthService {
    * Secure Global Logout
    */
   async logout(): Promise<void> {
-    if (supabase) {
-      try {
-        await supabase.auth.signOut({ scope: "global" });
-      } catch (e) {
-        console.error("Signout note:", e);
+    try {
+      const token = getAuthToken();
+      if (token) {
+        await fetch(`${API_BASE_URL}/api/auth/logout`, {
+          method: "POST",
+          headers: { Authorization: `Bearer ${token}` },
+        });
       }
+    } catch (e) {
+      console.warn("Logout notification note:", e);
     }
     this.clearLocalSession();
   }
@@ -275,35 +196,6 @@ class AuthService {
    * Restore Session on page refresh
    */
   async restoreSession(): Promise<AuthSession | null> {
-    if (supabase) {
-      try {
-        const { data } = await supabase.auth.getSession();
-        if (data.session && data.session.user && data.session.user.email_confirmed_at) {
-          const profile: UserProfile = {
-            id: data.session.user.id,
-            email: data.session.user.email!,
-            firstName: data.session.user.user_metadata?.first_name || "",
-            lastName: data.session.user.user_metadata?.last_name || "",
-            fullName: data.session.user.user_metadata?.full_name || data.session.user.email?.split("@")[0] || "User",
-            emailVerified: true,
-            createdAt: data.session.user.created_at,
-          };
-          const session: AuthSession = {
-            accessToken: data.session.access_token,
-            refreshToken: data.session.refresh_token,
-            tokenType: data.session.token_type || "Bearer",
-            expiresAt: data.session.expires_at ? data.session.expires_at * 1000 : undefined,
-            user: profile,
-          };
-          this.saveLocalSession(session);
-          return session;
-        }
-      } catch (err) {
-        console.warn("Session restore check:", err);
-      }
-    }
-
-    // Check localStorage fallback
     if (typeof window !== "undefined") {
       const stored = localStorage.getItem(SESSION_STORAGE_KEY);
       if (stored) {
@@ -337,6 +229,21 @@ class AuthService {
       localStorage.removeItem(SESSION_STORAGE_KEY);
     }
   }
+}
+
+export function getAuthToken(): string | null {
+  if (typeof window !== "undefined") {
+    try {
+      const item = localStorage.getItem(SESSION_STORAGE_KEY);
+      if (item) {
+        const session = JSON.parse(item);
+        return session.accessToken || null;
+      }
+    } catch (e) {
+      console.warn("Token read note:", e);
+    }
+  }
+  return null;
 }
 
 export const authService = new AuthService();

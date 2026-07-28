@@ -1,24 +1,14 @@
 // Forwarder adapter replacing legacy authentication functions with modern production architecture
-import { authService } from "@/services/auth/auth-service";
+import { authService, getAuthToken as getToken } from "@/services/auth/auth-service";
+import { AuthSession } from "@/types/auth";
 
 const SESSION_STORAGE_KEY = "compete_iq_auth_session";
 
 export function getAuthToken(): string | null {
-  if (typeof window !== "undefined") {
-    try {
-      const item = localStorage.getItem(SESSION_STORAGE_KEY);
-      if (item) {
-        const session = JSON.parse(item);
-        return session.accessToken || null;
-      }
-    } catch (e) {
-      console.warn("Token reading note:", e);
-    }
-  }
-  return null;
+  return getToken();
 }
 
-export function getAuthSession(): any | null {
+export function getAuthSession(): AuthSession | null {
   if (typeof window !== "undefined") {
     try {
       const item = localStorage.getItem(SESSION_STORAGE_KEY);
@@ -45,22 +35,21 @@ export async function loginWithCredentials(email: string, password?: string) {
 }
 
 export async function resendVerificationEmail(email: string) {
-  await authService.resendVerificationEmail(email);
+  await authService.sendOtp(email);
   return { success: true, verificationLink: null };
 }
 
 export async function sendOtpEmail(email: string) {
-  await authService.resendVerificationEmail(email);
+  await authService.sendOtp(email);
   return { success: true, devOtpCode: undefined };
 }
 
 export async function verifyOtpCode(email: string, code: string) {
-  return { verified: true };
+  const session = await authService.verifyOtp(email, code);
+  return { verified: true, session };
 }
 
 export async function completeOtpSignup(email: string, code: string, name: string, password?: string) {
-  const nameParts = (name || "New User").split(" ");
-  const firstName = nameParts[0] || "User";
-  const lastName = nameParts.slice(1).join(" ") || "";
-  return await authService.register({ email, password: password || "defaultPassA!1", firstName, lastName });
+  const session = await authService.verifyOtp(email, code);
+  return session;
 }
