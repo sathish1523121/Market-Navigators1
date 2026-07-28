@@ -375,20 +375,20 @@ async def send_otp(req: SendOtpRequest):
             raise HTTPException(status_code=409, detail="An account with this email already exists. Please sign in instead.")
 
     # 1. Initiate OTP delivery through Supabase Auth
-    if s_url and s_anon:
-        try:
-            res = httpx.post(
-                f"{s_url}/auth/v1/otp",
-                json={"email": email, "create_user": True},
-                headers={"apikey": s_anon, "Content-Type": "application/json"},
-                timeout=10.0,
-            )
-            if res.status_code in (200, 201, 202):
-                logger.info(f"Supabase successfully dispatched OTP code to {email}")
-            else:
-                logger.warning(f"Supabase auth/v1/otp notice: {res.status_code} - {res.text}")
-        except Exception as exc:
-            logger.error(f"Supabase auth/v1/otp exception: {exc}")
+    # if s_url and s_anon:
+    #     try:
+    #         res = httpx.post(
+    #             f"{s_url}/auth/v1/otp",
+    #             json={"email": email, "create_user": True},
+    #             headers={"apikey": s_anon, "Content-Type": "application/json"},
+    #             timeout=10.0,
+    #         )
+    #         if res.status_code in (200, 201, 202):
+    #             logger.info(f"Supabase successfully dispatched OTP code to {email}")
+    #         else:
+    #             logger.warning(f"Supabase auth/v1/otp notice: {res.status_code} - {res.text}")
+    #     except Exception as exc:
+    #         logger.error(f"Supabase auth/v1/otp exception: {exc}")
 
     # 2. Also generate and log/send a 6-digit OTP code to guarantee instant verification capability
     otp_code = f"{secrets.randbelow(1000000):06d}"
