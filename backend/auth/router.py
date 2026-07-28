@@ -411,7 +411,10 @@ async def verify_otp(req: VerifyOtpRequest):
     if not otp:
         raise HTTPException(status_code=400, detail="Verification code is required.")
 
-    # Check local fallback OTP_DB
+    s_url, s_anon, s_service, _ = get_supabase_keys()
+    existing_user = find_supabase_user_by_email(email)
+
+    # 1. Check local fallback OTP_DB
     local_verified = False
     record = OTP_DB.get(email)
     if record:
@@ -419,7 +422,13 @@ async def verify_otp(req: VerifyOtpRequest):
             local_verified = True
             record["verified"] = True
 
-    # Accept dev test fallback or master bypass if appropriate
+    # 2. Check serverless persistent metadata in Supabase Auth (survives Vercel lambda cold starts)
+    if not local_verified and existing_user:
+        meta_otp = existing_user.get("user_metadata", {}).get("dev_otp")
+        if meta_otp and str(meta_otp) == otp:
+            local_verified = True
+
+    # 3. Accept dev test fallback or master bypass if appropriate
     if not local_verified and otp != "123456":
         raise HTTPException(status_code=400, detail="Invalid or expired verification code. Please request a new code.")
 
@@ -430,30 +439,28 @@ async def verify_otp(req: VerifyOtpRequest):
 
     # Retrieve or initialize local user record
     user = USERS_DB.get(email, {"email": email, "name": email.split("@")[0], "role": "admin"})
-    name = user.get("name") or email.split("@")[0]
-    user_id = user.get("id")
+    if existing_user:
+        name = existing_user.get("user_metadata", {}).get("full_name", existing_user.get("user_metadata", {}).get("name", user.get("name") or "User"))
+        user_id = existing_user.get("id")
+    else:
+        name = user.get("name") or email.split("@")[0]
+        user_id = user.get("id")
 
-    # Permanently create or confirm account in Supabase Auth & PostgreSQL database
-    s_url, s_anon, s_service, _ = get_supabase_keys()
-    existing_user = find_supabase_user_by_email(email)
-
+    # Permanently confirm account in Supabase Auth GoTrue database
     if s_url and s_service:
         try:
-            if existing_user:
-                user_id = existing_user.get("id")
-                # Confirm user in Supabase Auth via Admin API
+            if existing_user and user_id:
                 upd_url = f"{s_url}/auth/v1/admin/users/{user_id}"
                 httpx.put(
                     upd_url,
                     json={
                         "email_confirm": True,
-                        "user_metadata": {"full_name": name, "role": "admin"},
+                        "user_metadata": {"full_name": name, "role": "admin", "dev_otp": None},
                     },
                     headers={"apikey": s_service, "Authorization": f"Bearer {s_service}", "Content-Type": "application/json"},
                     timeout=8.0,
                 )
             else:
-                # Create permanent confirmed account in Supabase Auth
                 crt_url = f"{s_url}/auth/v1/admin/users"
                 random_pass = secrets.token_urlsafe(16)
                 res = httpx.post(
@@ -462,20 +469,16 @@ async def verify_otp(req: VerifyOtpRequest):
                         "email": email,
                         "password": random_pass,
                         "email_confirm": True,
-                        "user_metadata": {"full_name": name, "role": "admin"},
+                        "user_metadata": {"full_name": name, "role": "admin", "dev_otp": None},
                     },
                     headers={"apikey": s_service, "Authorization": f"Bearer {s_service}", "Content-Type": "application/json"},
                     timeout=8.0,
                 )
                 if res.status_code in (200, 201):
                     user_id = res.json().get("id")
-                else:
-                    logger.warning(f"Notice creating Supabase user in verify-otp: {res.status_code} - {res.text}")
         except Exception as exc:
-            logger.error(f"Error persisting account to Supabase in verify-otp: {exc}")
+            logger.error(f"Error confirming account in Supabase in verify-otp: {exc}")
 
-    if not user_id and existing_user:
-        user_id = existing_user.get("id")
     if not user_id:
         user_id = str(secrets.token_hex(16))
 
@@ -607,10 +610,51 @@ async def register(req: RegisterRequest):
     name = req.get_display_name()
 
     existing = USERS_DB.get(email)
-    if existing and existing.get("email_verified"):
+    s_url, s_anon, s_service, _ = get_supabase_keys()
+    existing_supa = find_supabase_user_by_email(email)
+
+    if (existing and existing.get("email_verified")) or (existing_supa and (existing_supa.get("email_confirmed_at") or existing_supa.get("confirmed_at"))):
         raise HTTPException(status_code=409, detail="An account with this email already exists. Please sign in instead.")
 
-    user_id = str(secrets.token_hex(16))
+    # Generate 6-digit OTP code first to attach to serverless metadata
+    otp_code = f"{secrets.randbelow(1000000):06d}"
+    user_id = existing_supa.get("id") if existing_supa else None
+
+    # Persist account password and verification metadata directly in Supabase Auth GoTrue database
+    if s_url and s_service:
+        try:
+            if existing_supa and user_id:
+                upd_url = f"{s_url}/auth/v1/admin/users/{user_id}"
+                httpx.put(
+                    upd_url,
+                    json={
+                        "password": req.password,
+                        "user_metadata": {"full_name": name, "role": "admin", "dev_otp": otp_code},
+                    },
+                    headers={"apikey": s_service, "Authorization": f"Bearer {s_service}", "Content-Type": "application/json"},
+                    timeout=8.0,
+                )
+            else:
+                crt_url = f"{s_url}/auth/v1/admin/users"
+                res = httpx.post(
+                    crt_url,
+                    json={
+                        "email": email,
+                        "password": req.password,
+                        "email_confirm": False,
+                        "user_metadata": {"full_name": name, "role": "admin", "dev_otp": otp_code},
+                    },
+                    headers={"apikey": s_service, "Authorization": f"Bearer {s_service}", "Content-Type": "application/json"},
+                    timeout=8.0,
+                )
+                if res.status_code in (200, 201):
+                    user_id = res.json().get("id")
+        except Exception as exc:
+            logger.error(f"Error persisting credentials to Supabase in register: {exc}")
+
+    if not user_id:
+        user_id = str(secrets.token_hex(16))
+
     sync_user_to_public_table(user_id, email, name)
 
     USERS_DB[email] = {
@@ -623,8 +667,6 @@ async def register(req: RegisterRequest):
         "id": user_id,
     }
 
-    # Generate and send 6-digit OTP code
-    otp_code = f"{secrets.randbelow(1000000):06d}"
     OTP_DB[email] = {
         "otp": otp_code,
         "expires_at": datetime.now(timezone.utc) + timedelta(minutes=OTP_EXPIRE_MINUTES),
