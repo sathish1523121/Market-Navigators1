@@ -285,26 +285,40 @@ async def get_current_user(token: Optional[str] = Depends(oauth2_scheme)) -> Use
             res = httpx.get(f"{s_url}/auth/v1/user", headers=headers, timeout=6.0)
             if res.status_code == 200:
                 u_data = res.json()
+                # STRICT EMAIL VERIFICATION ENFORCEMENT:
+                if not u_data.get("email_confirmed_at") and not u_data.get("confirmed_at"):
+                    raise HTTPException(status_code=403, detail="EMAIL_NOT_VERIFIED")
+
                 email = u_data.get("email", "")
                 name = u_data.get("user_metadata", {}).get("full_name", u_data.get("user_metadata", {}).get("name", "User"))
                 return UserInfo(email=email, name=name, role="admin")
+            elif res.status_code == 403:
+                raise HTTPException(status_code=403, detail="EMAIL_NOT_VERIFIED")
+        except HTTPException:
+            raise
         except Exception:
             pass
 
-    # 2. Attempt local JWT secret decode
+    # 2. Attempt local JWT secret decode & DB status check
     try:
         payload = decode_token(token)
         email = payload.get("sub") or payload.get("email", "")
         if email:
+            if email in USERS_DB and USERS_DB[email].get("email_verified") is False:
+                raise HTTPException(status_code=403, detail="EMAIL_NOT_VERIFIED")
+                
             u_meta = payload.get("user_metadata", {})
             name = u_meta.get("full_name", u_meta.get("name", "User"))
             if email in USERS_DB:
                 name = USERS_DB[email].get("name", name)
             return UserInfo(email=email, name=name, role="admin")
+    except HTTPException:
+        raise
     except Exception:
         pass
 
     raise HTTPException(status_code=401, detail="User session invalid or expired. Please sign in again.")
+
 
 
 # ---------------------------------------------------------------------------
@@ -762,3 +776,24 @@ async def resend_verification(req: LoginRequest):
     if dev_mode:
         response["verification_link"] = f"{_get_smtp_settings()['frontend_base_url']}/verify-email?token={verification_token}"
     return response
+
+
+@router.post("/forgot-password")
+async def forgot_password(req: LoginRequest):
+    email = req.email.strip().lower()
+    if not email or "@" not in email:
+        raise HTTPException(status_code=400, detail="Invalid email address.")
+
+    s_url, s_anon, _, _ = get_supabase_keys()
+    if s_url and s_anon:
+        try:
+            httpx.post(
+                f"{s_url}/auth/v1/recover",
+                json={"email": email},
+                headers={"apikey": s_anon, "Content-Type": "application/json"},
+                timeout=6.0,
+            )
+        except Exception as exc:
+            logger.error(f"Error requesting Supabase recovery: {exc}")
+
+    return {"message": f"Password recovery link dispatched to {email} if an account exists."}

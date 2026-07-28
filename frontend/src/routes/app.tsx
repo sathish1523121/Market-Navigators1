@@ -1,15 +1,15 @@
 import { createFileRoute, Link, Outlet, useRouter, useRouterState } from "@tanstack/react-router";
-import { Bell, Search } from "lucide-react";
+import { Bell, Search, LogOut, ShieldAlert } from "lucide-react";
 import { SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar";
 import { AppSidebar } from "@/components/app-sidebar";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
-import { Toaster } from "@/components/ui/sonner";
+import { Toaster, toast } from "sonner";
 import { createContext, useContext, useState, useEffect, useCallback } from "react";
 import { fetchMarketTrends, MarketTrendsResponse } from "../lib/api";
-import { getAuthSession } from "../lib/auth";
+import { useAuth } from "@/hooks/auth/useAuth";
 
 export interface MarketDataContextType {
   query: string;
@@ -33,7 +33,7 @@ export const Route = createFileRoute("/app")({
   head: () => ({
     meta: [
       { title: "Dashboard — Compete IQ" },
-      { name: "description", content: "Your competitor intelligence workspace." },
+      { name: "description", content: "Your verified competitor intelligence workspace." },
     ],
   }),
   component: AppLayout,
@@ -43,24 +43,22 @@ function AppLayout() {
   const pathname = useRouterState({ select: (r) => r.location.pathname });
   const router = useRouter();
   
+  const { user, isAuthenticated, isEmailVerified, isLoading: authLoading, logout } = useAuth();
+
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<MarketTrendsResponse | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [searchInputValue, setSearchInputValue] = useState("");
-  const [session, setSession] = useState(() => getAuthSession());
 
-  // Derive user initials from session name
-  const userInitials = session?.name
-    ? session.name
+  const userInitials = user?.fullName
+    ? user.fullName
         .split(" ")
         .map((n) => n[0])
         .join("")
         .toUpperCase()
         .slice(0, 2)
-    : "?";
-
-  const isEmailVerified = session?.emailVerified ?? true;
+    : "IQ";
 
   const triggerSearch = useCallback(async (q: string) => {
     if (!q.trim()) return;
@@ -79,14 +77,33 @@ function AppLayout() {
   }, []);
 
   useEffect(() => {
-    const session = getAuthSession();
-    if (!session) {
-      router.navigate({ to: "/login" });
-      return;
+    if (!authLoading) {
+      if (!isAuthenticated) {
+        router.navigate({ to: "/login" });
+        return;
+      }
+      if (!isEmailVerified) {
+        router.navigate({ to: "/verify-email" });
+        return;
+      }
+      triggerSearch("immune support");
     }
-    setSession(session);
-    triggerSearch("immune support");
-  }, [router, triggerSearch]);
+  }, [authLoading, isAuthenticated, isEmailVerified, router, triggerSearch]);
+
+  if (authLoading) {
+    return (
+      <div className="flex min-h-screen w-full items-center justify-center bg-background">
+        <div className="flex flex-col items-center gap-3">
+          <div className="h-8 w-8 animate-spin rounded-full border-4 border-primary border-t-transparent" />
+          <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Verifying Session Security...</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (!isAuthenticated || !isEmailVerified) {
+    return null; // Redirect handled by useEffect
+  }
 
   return (
     <MarketDataContext.Provider value={{ query, results, loading, error, triggerSearch }}>
@@ -110,30 +127,36 @@ function AppLayout() {
                   }}
                 />
               </div>
-              <div className="ml-auto flex items-center gap-1">
+              <div className="ml-auto flex items-center gap-2">
                 <ThemeToggle />
-                <Button variant="ghost" size="icon" asChild aria-label="Alerts">
+                <Button variant="ghost" size="icon" asChild aria-label="Alerts" title="Alerts">
                   <Link to="/app/alerts">
                     <Bell className="h-4 w-4" />
                   </Link>
                 </Button>
-                <Avatar className="h-8 w-8" title={session?.name ?? ""} >
-                  <AvatarFallback className="bg-primary/10 text-xs font-medium text-primary">
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  onClick={logout}
+                  title="Sign Out"
+                  aria-label="Sign Out of workspace"
+                  className="text-muted-foreground hover:text-destructive transition-colors"
+                >
+                  <LogOut className="h-4 w-4" />
+                </Button>
+                <Avatar className="h-8 w-8 ring-2 ring-primary/20" title={user?.fullName || "User Profile"}>
+                  <AvatarFallback className="bg-primary/10 text-xs font-bold text-primary font-mono">
                     {userInitials}
                   </AvatarFallback>
                 </Avatar>
               </div>
             </header>
+            
             <main key={pathname} className="min-w-0 flex-1 p-4 sm:p-6 lg:p-8">
-              {!isEmailVerified && (
-              <div className="mb-4 flex items-center justify-between gap-2 rounded-lg border border-amber-500/30 bg-amber-500/10 px-4 py-2 text-sm text-amber-700 dark:text-amber-400">
-                <span>📧 Please verify your email to unlock all features. Check your inbox for a confirmation link.</span>
-              </div>
-            )}
-            {loading && (
-                <div className="mb-4 flex items-center gap-2 rounded-lg border border-primary/20 bg-primary/5 px-4 py-2 text-sm text-muted-foreground">
+              {loading && (
+                <div className="mb-4 flex items-center gap-2 rounded-xl border border-primary/20 bg-primary/5 px-4 py-2.5 text-xs font-semibold text-muted-foreground shadow-sm">
                   <div className="h-4 w-4 animate-spin rounded-full border-2 border-primary border-t-transparent" />
-                  Querying agents for "{query}"...
+                  <span>Querying intelligence agents for "{query}"...</span>
                 </div>
               )}
               {error ? (
@@ -155,4 +178,3 @@ function AppLayout() {
     </MarketDataContext.Provider>
   );
 }
-
