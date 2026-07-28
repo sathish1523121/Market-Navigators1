@@ -229,6 +229,19 @@ async def get_job_result(job_id: str, _current_user: UserInfo = Depends(get_curr
 
 
 # ---------------------------------------------------------------------------
+# Run directly with: python main.py
+# ---------------------------------------------------------------------------
+if __name__ == "__main__":
+    import uvicorn
+
+    uvicorn.run(
+        "main:app",
+        host="0.0.0.0",
+        port=8000,
+        reload=True
+    )
+
+# ---------------------------------------------------------------------------
 # Auth is now fully wired up.
 # ---------------------------------------------------------------------------
 # The auth router is mounted at startup (see above).
