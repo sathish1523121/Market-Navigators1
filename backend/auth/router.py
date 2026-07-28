@@ -428,15 +428,68 @@ async def verify_otp(req: VerifyOtpRequest):
     else:
         OTP_DB[email] = {"otp": otp, "expires_at": datetime.now(timezone.utc) + timedelta(minutes=10), "verified": True}
 
-    # Activate user account in USERS_DB
+    # Retrieve or initialize local user record
     user = USERS_DB.get(email, {"email": email, "name": email.split("@")[0], "role": "admin"})
+    name = user.get("name") or email.split("@")[0]
+    user_id = user.get("id")
+
+    # Permanently create or confirm account in Supabase Auth & PostgreSQL database
+    s_url, s_anon, s_service, _ = get_supabase_keys()
+    existing_user = find_supabase_user_by_email(email)
+
+    if s_url and s_service:
+        try:
+            if existing_user:
+                user_id = existing_user.get("id")
+                # Confirm user in Supabase Auth via Admin API
+                upd_url = f"{s_url}/auth/v1/admin/users/{user_id}"
+                httpx.put(
+                    upd_url,
+                    json={
+                        "email_confirm": True,
+                        "user_metadata": {"full_name": name, "role": "admin"},
+                    },
+                    headers={"apikey": s_service, "Authorization": f"Bearer {s_service}", "Content-Type": "application/json"},
+                    timeout=8.0,
+                )
+            else:
+                # Create permanent confirmed account in Supabase Auth
+                crt_url = f"{s_url}/auth/v1/admin/users"
+                random_pass = secrets.token_urlsafe(16)
+                res = httpx.post(
+                    crt_url,
+                    json={
+                        "email": email,
+                        "password": random_pass,
+                        "email_confirm": True,
+                        "user_metadata": {"full_name": name, "role": "admin"},
+                    },
+                    headers={"apikey": s_service, "Authorization": f"Bearer {s_service}", "Content-Type": "application/json"},
+                    timeout=8.0,
+                )
+                if res.status_code in (200, 201):
+                    user_id = res.json().get("id")
+                else:
+                    logger.warning(f"Notice creating Supabase user in verify-otp: {res.status_code} - {res.text}")
+        except Exception as exc:
+            logger.error(f"Error persisting account to Supabase in verify-otp: {exc}")
+
+    if not user_id and existing_user:
+        user_id = existing_user.get("id")
+    if not user_id:
+        user_id = str(secrets.token_hex(16))
+
+    # Synchronize profile to public.users PostgreSQL table
+    sync_user_to_public_table(user_id, email, name)
+
+    user["id"] = user_id
     user["email_verified"] = True
     user["is_active"] = True
     USERS_DB[email] = user
 
-    token = create_access_token({"sub": email, "email": email, "user_metadata": {"full_name": user.get("name", "User"), "role": "admin"}})
+    token = create_access_token({"sub": email, "email": email, "user_metadata": {"full_name": name, "role": "admin"}})
     return TokenResponse(
-        access_token=token, email=email, name=user.get("name", "User"), role="admin", expires_in=JWT_EXPIRE_HOURS * 3600, email_verified=True
+        access_token=token, email=email, name=name, role="admin", expires_in=JWT_EXPIRE_HOURS * 3600, email_verified=True
     )
 
 
