@@ -72,7 +72,7 @@ def _get_smtp_settings():
 
 def send_otp_email_helper(to_email: str, otp_code: str) -> None:
     cfg = _get_smtp_settings()
-    if not cfg["user"] or not cfg["password"] or "resend.dev" in cfg["from_addr"] and not os.getenv("RESEND_API_KEY"):
+    if not cfg["user"] or not cfg["password"]:
         logger.info(f"[DEV] 6-digit OTP for {to_email}: {otp_code}")
         print(f"\n[DEV] 6-digit OTP code for {to_email}: {otp_code}\n")
         return
@@ -111,6 +111,35 @@ def send_verification_email_helper(to_email: str, token: str, name: str) -> None
     if not cfg["user"] or not cfg["password"]:
         print(f"\n[DEV] Verification link for {to_email}:\n  {verify_url}\n")
         return
+
+    try:
+        from email.mime.multipart import MIMEMultipart
+        from email.mime.text import MIMEText
+
+        subject = "Verify your Compete IQ account"
+        html_body = f"""<div style="font-family:Arial;max-width:480px;margin:30px auto;padding:30px;background:#1e293b;border-radius:12px;color:#e2e8f0;text-align:center;">
+        <h2 style="color:#fff;">Welcome to Compete IQ, {name}!</h2>
+        <p>Click the link below to verify your email address and activate your account:</p>
+        <div style="margin:25px 0;">
+          <a href="{verify_url}" style="padding:12px 24px;background:#6366f1;color:#ffffff;text-decoration:none;border-radius:8px;font-weight:bold;display:inline-block;">Verify Email Address</a>
+        </div>
+        <p style="color:#94a3b8;font-size:12px;">Or copy and paste this URL into your browser:<br/><span style="color:#818cf8;">{verify_url}</span></p>
+        </div>"""
+        msg = MIMEMultipart("alternative")
+        msg["Subject"] = subject
+        msg["From"] = cfg["from_addr"]
+        msg["To"] = to_email
+        msg.attach(MIMEText(html_body, "html"))
+
+        with smtplib.SMTP(cfg["host"], cfg["port"], timeout=5) as server:
+            server.ehlo()
+            if cfg["port"] == 587:
+                server.starttls()
+            server.login(cfg["user"], cfg["password"])
+            server.sendmail(cfg["from_addr"], [to_email], msg.as_string())
+    except Exception as exc:
+        logger.warning(f"SMTP verification email failed (falling back to console): {exc}")
+        print(f"\n[DEV FALLBACK] Verification link for {to_email}:\n  {verify_url}\n")
 
 
 # ---------------------------------------------------------------------------
