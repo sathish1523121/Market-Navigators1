@@ -21,7 +21,7 @@ try {
       persistSession: true,
       autoRefreshToken: true,
       detectSessionInUrl: true,
-      storageKey: "compete_iq_auth_session",
+      storageKey: "compete_iq_supabase_session",
     },
   });
 } catch (error) {

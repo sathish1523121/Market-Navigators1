@@ -20,7 +20,7 @@ export const VerificationPending: React.FC<VerificationPendingProps> = ({
   onChangeEmail,
 }) => {
   const navigate = useNavigate();
-  const { pendingVerificationEmail, setPendingVerificationEmail } = useAuth();
+  const { pendingVerificationEmail, setPendingVerificationEmail, verifyOtp } = useAuth();
   const [resending, setResending] = useState(false);
   const [resendCooldown, setResendCooldown] = useState(0);
   const [otpCode, setOtpCode] = useState("");
@@ -41,14 +41,13 @@ export const VerificationPending: React.FC<VerificationPendingProps> = ({
     setErrorMsg(null);
 
     try {
-      await authService.verifyOtp(displayEmail, otpCode.trim());
+      await verifyOtp(displayEmail, otpCode.trim());
       toast.success("Email verified successfully!", {
         description: "Your workspace is unlocked. Redirecting to dashboard...",
       });
-      setPendingVerificationEmail(null);
       setTimeout(() => {
-        window.location.href = "/app";
-      }, 500);
+        navigate({ to: "/app" });
+      }, 300);
     } catch (err: any) {
       const msg = err.message || "Invalid verification code. Please check and try again.";
       setErrorMsg(msg);

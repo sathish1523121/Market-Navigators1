@@ -16,6 +16,7 @@ export interface AuthContextType {
   register: (credentials: RegisterCredentials) => Promise<{ user: UserProfile; verificationSent: boolean }>;
   logout: () => Promise<void>;
   resendVerification: (email?: string) => Promise<boolean>;
+  verifyOtp: (email: string, otp: string) => Promise<AuthSession>;
   requestPasswordReset: (email: string) => Promise<boolean>;
   updatePassword: (newPassword: string) => Promise<boolean>;
 }
@@ -118,6 +119,23 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     return await authService.resendVerificationEmail(targetEmail);
   }, [pendingVerificationEmail]);
 
+  const verifyOtp = useCallback(async (email: string, otp: string) => {
+    setIsLoading(true);
+    setError(null);
+    try {
+      const sess = await authService.verifyOtp(email, otp);
+      setSession(sess);
+      setUser(sess.user);
+      setPendingVerificationEmail(null);
+      return sess;
+    } catch (err: any) {
+      setError(err.message || "Verification code validation failed.");
+      throw err;
+    } finally {
+      setIsLoading(false);
+    }
+  }, []);
+
   const requestPasswordReset = useCallback(async (email: string) => {
     return await authService.requestPasswordReset(email);
   }, []);
@@ -144,6 +162,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         register,
         logout,
         resendVerification,
+        verifyOtp,
         requestPasswordReset,
         updatePassword,
       }}
